@@ -2,3 +2,7 @@
 logs/
 output/
 status/
+ethz/
+iquique/
+geofon/
+*.png

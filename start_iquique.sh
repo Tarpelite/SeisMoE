@@ -3,22 +3,22 @@
 # 设置变量
 TOTAL_WORKERS=16
 ORIGINAL_CACHE_ROOT="/home/icassp2026/tianyu/local_cache"
-CACHE_DIR="/home/icassp2026/tianyu/local_cache/datasets/ethz/worker_caches"  # worker缓存文件目录
-OUTPUT_DIR="./ethz/output"
-STATUS_DIR="./ethz/status"
-LOG_DIR="./ethz/logs"
-FINAL_OUTPUT="ETHZ_emd_final.hdf5"
+CACHE_DIR="/home/icassp2026/tianyu/local_cache/datasets/iquique/worker_caches"  # worker缓存文件目录
+OUTPUT_DIR="./iquique/output"
+STATUS_DIR="./iquique/status"
+LOG_DIR="./iquique/logs"
+FINAL_OUTPUT="IQUIQUE_emd_final.hdf5"
 
 # 创建目录
 mkdir -p $CACHE_DIR $OUTPUT_DIR $STATUS_DIR $LOG_DIR
 
-echo "Starting optimized ethz EMD processing..."
+echo "Starting optimized iquique EMD processing..."
 echo "Total workers: $TOTAL_WORKERS"
 
 # # # 第一步：预处理数据
 # echo "Step 1: Preprocessing data..."
-# python /home/icassp2026/emd_extract/SeisMoE/preprocess_data_ethz.py  \
-#                             --input-file $ORIGINAL_CACHE_ROOT/datasets/ethz/waveforms.hdf5 \
+# python /home/icassp2026/emd_extract/SeisMoE/preprocess_data_iquique.py  \
+#                             --input-file $ORIGINAL_CACHE_ROOT/datasets/iquique/waveforms.hdf5 \
 #                             --output-dir $CACHE_DIR
 
 # if [ $? -ne 0 ]; then
@@ -26,9 +26,9 @@ echo "Total workers: $TOTAL_WORKERS"
 #     exit 1
 # fi
 
-# # 第二步：启动worker处理
+# 第二步：启动worker处理
 echo "Step 2: Starting workers..."
-python monitor.py --total-workers $TOTAL_WORKERS \
+python monitor_iquique.py --total-workers $TOTAL_WORKERS \
                            --cache-dir $CACHE_DIR \
                            --output-dir $OUTPUT_DIR \
                            --status-dir $STATUS_DIR \

@@ -34,7 +34,7 @@ class Monitor:
         """启动单个worker进程"""
         # Worker有自己的logging配置，不需要重定向stdout
         process = subprocess.Popen([
-            sys.executable, 'worker_ethz.py',
+            sys.executable, 'worker_iquique.py',
             '--worker-id', str(worker_id),
             '--cache-dir', str(self.cache_dir),
             '--output-dir', str(self.output_dir),
