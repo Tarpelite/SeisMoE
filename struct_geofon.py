@@ -18,5 +18,6 @@ def list_h5_structure(file_path):
         f.visititems(explore_h5)
 
 # 使用示例
-list_h5_structure("/mnt/samba/seisbench_cache/datasets/iquique/waveforms.hdf5")
-#list_h5_structure("/home/icassp2026/emd_extract/SeisMoE/output/GEOFON_emd_worker_15.hdf5")
+list_h5_structure("/home/icassp2026/tianyu/local_cache/datasets/instancecounts/waveforms.hdf5")
+#list_h5_structure("/home/icassp2026/emd_extract/SeisMoE/output/stead_emd_worker_15.hdf5")
+#list_h5_structure("/home/icassp2026/tianyu/local_cache/datasets/stead/worker_caches/worker_0_cache.h5")

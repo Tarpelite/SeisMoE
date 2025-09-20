@@ -97,7 +97,7 @@ def main():
     """主函数"""
     parser = argparse.ArgumentParser(description='从local_cache中随机绘制波形图')
     parser.add_argument('--file', type=str, 
-                       default='/home/icassp2026/tianyu/local_cache/datasets/ethz/waveforms.hdf5',
+                       default='/home/icassp2026/tianyu/local_cache/datasets/stead/waveforms.hdf5',
                        help='waveforms.hdf5文件路径')
     parser.add_argument('--output-dir', type=str,
                        help='输出目录（默认为文件所在目录）')
