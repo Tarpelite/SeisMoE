@@ -1,0 +1,1 @@
+CUDA_VISIBLE_DEVICES=0 python benchmark/eval.py weights/geofon_seismoe-trial targets/stead

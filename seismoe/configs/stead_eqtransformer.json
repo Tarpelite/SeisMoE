@@ -1,0 +1,13 @@
+{
+  "model": "EQTransformer",
+  "data": "STEAD",
+  "trainer_args": {
+    "accelerator": "gpu",
+    "devices": 4,
+    "max_epochs": 100
+  },
+  "model_args": {
+    "lr": 1e-3,
+    "rotate_array": true
+  }
+}

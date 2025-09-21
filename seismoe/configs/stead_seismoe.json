@@ -1,0 +1,18 @@
+{
+  "model": "SeisMoE",
+  "data": "STEAD",
+  "trainer_args": {
+    "accelerator": "gpu",
+    "devices": 1,
+    "max_epochs": 200
+  },
+  "model_args": {
+    "base_model": "weights/geofon_eqtransformer/",
+    "num_experts": 4,
+    "num_experts_per_token": 2,
+    "moe_loss_coef": 0.1,
+    "lr": 1e-3,
+    "rotate_array": true,
+    "freeze_non_moe": true
+  }
+}
