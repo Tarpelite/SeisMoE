@@ -19,10 +19,10 @@ from util import load_best_model
 
 # Allows to import this file in both jupyter notebook and code
 try:
-    from .augmentations import DuplicateEvent
+    from .augmentations import DuplicateEvent, SyncEMDWindow
     from .SeisMoE import SeisMoE
 except ImportError:
-    from augmentations import DuplicateEvent
+    from augmentations import DuplicateEvent, SyncEMDWindow
     from SeisMoE import SeisMoE
 
 
@@ -437,6 +437,7 @@ class EQTransformerLit(SeisBenchModuleLit):
 
     def shared_step(self, batch):
         x = batch["X"]
+        print(x.shape)
         p_true = batch["y"][:, 0]
         s_true = batch["y"][:, 1]
         det_true = batch["detections"][:, 0]
@@ -691,16 +692,19 @@ class SeisMoELit(SeisBenchModuleLit):
         print(f"Frozen non-MoE parameters. Trainable parameters: "
               f"{sum(p.numel() for p in self.model.parameters() if p.requires_grad):,}")
     
-    def forward(self, x):
-        return self.model(x)
+    def forward(self, x, emd_stats=None):
+        return self.model(x, emd_stats)
     
     def shared_step(self, batch):
         x = batch["X"]
+        emd_stats = batch.get("emd_stats", None)
+        # print("X shape:", x.shape)
+        # print("EMD features shape:", emd_stats.shape if emd_stats is not None else None)
         p_true = batch["y"][:, 0]
         s_true = batch["y"][:, 1]
         det_true = batch["detections"][:, 0]
-        
-        det_pred, p_pred, s_pred = self.model(x)
+
+        det_pred, p_pred, s_pred = self.model(x, emd_stats)
         
         # Standard losses
         loss_det = self.loss(det_pred, det_true)
@@ -825,6 +829,7 @@ class SeisMoELit(SeisBenchModuleLit):
                 windowlen=6000,
                 strategy="pad",
             ),
+            # SyncEMDWindow(),  # Custom augmentation to sync EMD features with X
             sbg.ProbabilisticLabeller(
                 label_columns=phase_dict, sigma=self.sigma, dim=0
             ),
@@ -835,6 +840,7 @@ class SeisMoELit(SeisBenchModuleLit):
         block2 = [
             sbg.ChangeDtype(np.float32, "X"),
             sbg.ChangeDtype(np.float32, "y"),
+            sbg.ChangeDtype(np.float32, "emd_stats"),
             sbg.ChangeDtype(np.float32, "detections"),
         ]
 
@@ -867,8 +873,8 @@ class SeisMoELit(SeisBenchModuleLit):
         ]
 
         block1, block2 = self.get_joint_augmentations()
+
         return block1 + augmentation_block + block2
-    
     def get_val_augmentations(self):
         block1, block2 = self.get_joint_augmentations()
         return block1 + block2
@@ -885,10 +891,13 @@ class SeisMoELit(SeisBenchModuleLit):
     
     def predict_step(self, batch, batch_idx=None, dataloader_idx=None):
         x = batch["X"]
+        emd_stats = batch.get("emd_stats", None)
+        if emd_stats is None:
+            emd_stats = torch.zeros(x.shape[0], 36, device=x.device, dtype=x.dtype)
         window_borders = batch["window_borders"]
 
-        det_pred, p_pred, s_pred = self.model(x)
-
+        det_pred, p_pred, s_pred = self.model(x, emd_stats)
+    
         score_detection = torch.zeros(det_pred.shape[0])
         score_p_or_s = torch.zeros(det_pred.shape[0])
         p_sample = torch.zeros(det_pred.shape[0], dtype=int)

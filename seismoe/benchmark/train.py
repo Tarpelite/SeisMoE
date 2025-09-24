@@ -23,12 +23,12 @@ import logging
 
 import data
 import models
-from util import default_workers
+from util import default_workers, CustomGenericGenerator
 import time
 import datetime
 
 
-def train(config, experiment_name, test_run, resume=False):
+def train(config, experiment_name, test_run):
     """
     Runs the model training defined by the config.
 
@@ -47,7 +47,6 @@ def train(config, experiment_name, test_run, resume=False):
 
     :param config: Configuration parameters for training
     :param test_run: If true, makes a test run with less data and less logging. Intended for debug purposes.
-    :param resume: If true, resumes training from the last checkpoint.
     """
     model = models.__getattribute__(config["model"] + "Lit")(
         **config.get("model_args", {})
@@ -77,40 +76,14 @@ def train(config, experiment_name, test_run, resume=False):
     # device_stats = DeviceStatsMonitor()
     # callbacks.append(device_stats)
 
-    ckpt_path = None
-    if resume:
-        experiment_dir = os.path.join("weights", experiment_name)
-        if os.path.exists(experiment_dir):
-            version_dirs = [d for d in os.listdir(experiment_dir) if d.startswith("version_") and os.path.isdir(os.path.join(experiment_dir, d))]
-            if version_dirs:
-                version_dirs.sort(key=lambda x: int(x.split('_')[-1]))
-                latest_version_dir = os.path.join(experiment_dir, version_dirs[-1])
-                
-                checkpoint_dir = os.path.join(latest_version_dir, "checkpoints")
-                if os.path.exists(checkpoint_dir):
-                    checkpoints = [f for f in os.listdir(checkpoint_dir) if f.endswith(".ckpt")]
-                    if checkpoints:
-                        latest_ckpt = max(checkpoints, key=lambda f: os.path.getmtime(os.path.join(checkpoint_dir, f)))
-                        ckpt_path = os.path.join(checkpoint_dir, latest_ckpt)
-                        print(f"Resuming training from checkpoint: {ckpt_path}")
-                    else:
-                        print("No checkpoints found in the latest version directory.")
-                else:
-                    print("Checkpoint directory not found in the latest version directory.")
-            else:
-                print("No version directories found for this experiment.")
-        else:
-            print("Experiment directory not found.")
-
     trainer = pl.Trainer(
         default_root_dir=default_root_dir,
         logger=loggers,
         callbacks=callbacks,
-        gradient_clip_val=0.1,
         **config.get("trainer_args", {}),
     )
 
-    trainer.fit(model, train_loader, dev_loader, ckpt_path=ckpt_path)
+    trainer.fit(model, train_loader, dev_loader)
 
 
 def prepare_data(config, model, test_run):
@@ -139,7 +112,8 @@ def prepare_data(config, model, test_run):
 
         dataset._metadata["split"] = split
 
-    train_data = dataset.train()
+    # train_data = dataset.train()
+    train_data = dataset
     dev_data = dataset.dev()
 
     if test_run:
@@ -158,9 +132,14 @@ def prepare_data(config, model, test_run):
     train_data.preload_waveforms(pbar=True)
     dev_data.preload_waveforms(pbar=True)
 
-    train_generator = sbg.GenericGenerator(train_data)
-    dev_generator = sbg.GenericGenerator(dev_data)
-
+    # train_generator = sbg.GenericGenerator(train_data)
+    # dev_generator = sbg.GenericGenerator(dev_data)
+    train_generator = CustomGenericGenerator(train_data)
+    dev_generator = CustomGenericGenerator(dev_data)
+    sample = train_generator[0]
+    # print(f"sample keys: {sample.keys()}")
+    # print(f"sample x shape: {sample['X'].shape}")
+    # print(f"sample emd stats: {sample['emd_stats'].shape}")
     train_generator.add_augmentations(model.get_train_augmentations())
     dev_generator.add_augmentations(model.get_val_augmentations())
 
@@ -170,7 +149,7 @@ def prepare_data(config, model, test_run):
         shuffle=True,
         num_workers=num_workers,
         worker_init_fn=worker_seeding,
-        prefetch_factor=8,
+        prefetch_factor=4,
         pin_memory=True,
         drop_last=True,  # Avoid crashes from batch norm layers for batch size 1
     )
@@ -229,7 +208,7 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, required=True)
     parser.add_argument("--test_run", action="store_true")
     parser.add_argument("--lr", default=None, type=float)
-    parser.add_argument("--resume", action="store_true", help="Resume training from the last checkpoint")
+    parser.add_argument("--postfix", default="", type=str)
     args = parser.parse_args()
 
     with open(args.config, "r") as f:
@@ -243,7 +222,11 @@ if __name__ == "__main__":
 
     if args.test_run:
         experiment_name = experiment_name + "_test"
-    train(config, experiment_name, test_run=args.test_run, resume=args.resume)
+
+    if args.postfix != "":
+        experiment_name = experiment_name + f"-{args.postfix}"
+
+    train(config, experiment_name, test_run=args.test_run)
 
     running_time = str(
         datetime.timedelta(seconds=time.perf_counter() - code_start_time)

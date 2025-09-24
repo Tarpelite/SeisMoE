@@ -14,9 +14,38 @@ import yaml
 import pandas as pd
 import models
 from util import load_best_model
+from seisbench.models.eqtransformer import EQTransformer
 
-# TODO: gate network tracing weights
-# TODO: Add EMD feature
+# DOING: gate network tracing weights
+# DONE: emd stats
+
+
+def get_emd_stats(emd_features):
+    """
+    Compute statistics from EMD features
+    Args:
+        emd_features: Tensor of shape (batch, channels, imfs, time)
+    Returns:
+        stats: Tensor of shape (batch, channels * imfs * 4)
+    """
+    # Reshape for easier computation: (batch, 9, time_length)
+    b, c, i, t = emd_features.shape
+    emd_flat = emd_features.view(b, c * i, t)
+
+    mean = torch.mean(emd_flat, dim=-1)
+    std = torch.std(emd_flat, dim=-1)
+    
+    # For skew and kurtosis, we need to be careful with dimensions
+    mean_expanded = mean.unsqueeze(-1)
+    std_expanded = std.unsqueeze(-1).clamp(min=1e-6)
+    
+    skew = torch.mean(((emd_flat - mean_expanded) / std_expanded) ** 3, dim=-1)
+    kurt = torch.mean(((emd_flat - mean_expanded) / std_expanded) ** 4, dim=-1)
+
+    # Concatenate features: (batch, 9, 4) -> (batch, 36)
+    stats = torch.stack([mean, std, skew, kurt], dim=-1)
+    return stats.view(b, -1)
+
 class MoEFeedForward(nn.Module):
     """
     Mixture of Experts FeedForward layer
@@ -96,13 +125,13 @@ class MoEFeedForward(nn.Module):
             self.experts.append(expert)
         
         # Gating network
-        self.gate = nn.Linear(io_size, num_experts)
+        self.gate = nn.Linear(io_size+36, num_experts)
         
         # For tracking load balancing
         self.register_buffer('expert_usage', torch.zeros(num_experts))
         self.register_buffer('total_tokens', torch.zeros(1))
         
-    def forward(self, x):
+    def forward(self, x, emd_stats):
         """
         x shape: (batch, channel, time)
         """
@@ -112,9 +141,16 @@ class MoEFeedForward(nn.Module):
         x = x.permute(0, 2, 1)  # (batch, time, channel)
         x_flat = x.reshape(-1, self.io_size)  # (batch * time, channel)
         
+        # -- combine with EMD features --
+        # expand emd features to match x_flat
+        emd_stats_expanded = emd_stats.unsqueeze(1).expand(-1, seq_len, -1)
+        emd_stats_flat = emd_stats_expanded.reshape(-1, emd_stats.shape[-1])  # (batch * time, emd_feature_size)
+        # concatenate with x_flat
+        gate_input = torch.cat([x_flat, emd_stats_flat], dim=-1)  # (batch * time, channel + emd_feature_size)
+
         # Compute gating scores
-        gate_logits = self.gate(x_flat)  # (batch * time, num_experts)
-        
+        gate_logits = self.gate(gate_input)  # (batch * time, num_experts)
+
         # Add noise during training for exploration
         if self.training and self.noise_std > 0:
             noise = torch.randn_like(gate_logits) * self.noise_std
@@ -242,14 +278,73 @@ class TransformerMoE(nn.Module):
             )
             self.norm2 = LayerNormalization(input_size)
     
-    def forward(self, x):
+    def forward(self, x, emd_stats):
         y, weight = self.attention(x)
         y = x + y
         y = self.norm1(y)
-        y2 = self.ff(y)
+        y2 = self.ff(y, emd_stats)
         y2 = y + y2
         y2 = self.norm2(y2)
         return y2, weight
+
+class EQTransformerWithEMD(EQTransformer):
+    """
+    An EQTransformer subclass that accepts EMD statistics in its forward pass
+    to guide the MoE layers.
+    """
+    def forward(self, x, emd_stats, logits=False):
+        """
+        Forward pass through the EQTransformer with EMD stats for MoE layers.
+        
+        Args:
+            x: Input tensor of shape (batch, channels, time)
+            emd_stats: EMD statistics tensor of shape (batch, emd_feature_size)
+            logits: If True, return raw logits instead of probabilities
+        Returns:
+            Output tensor after passing through the model
+        """
+        # 1. Encoder part (unchanged)
+        x_ = self.encoder(x)
+        x_ = self.res_cnn_stack(x_)
+        x_ = self.bi_lstm_stack(x_)
+
+        # 2. Transformer part (MODIFIED)
+        # self.transformer_d0 is now a TransformerMoE instance.
+        # We pass emd_stats to it.
+        x_, _ = self.transformer_d0(x_, emd_stats)
+        
+        # The second transformer is kept as original.
+        x_, _ = self.transformer_d(x_)
+
+        # 3. Decoder and output parts (unchanged)
+        detection = self.decoder_d(x_)
+        if logits:
+            detection = self.conv_d(detection)
+        else:
+            detection = torch.sigmoid(self.conv_d(detection))
+        detection = torch.squeeze(detection, dim=1)
+
+        outputs = [detection]
+
+        # Pick parts (unchanged)
+        for lstm, attention, decoder, conv in zip(
+            self.pick_lstms, self.pick_attentions, self.pick_decoders, self.pick_convs
+        ):
+            px = x_.permute(2, 0, 1)
+            px = lstm(px)[0]
+            px = self.dropout(px)
+            px = px.permute(1, 2, 0)
+            px, _ = attention(px)
+            px = decoder(px)
+            if logits:
+                pred = conv(px)
+            else:
+                pred = torch.sigmoid(conv(px))
+            pred = torch.squeeze(pred, dim=1)
+            outputs.append(pred)
+
+        return tuple(outputs)
+
 
 
 class SeisMoE(nn.Module):
@@ -281,7 +376,7 @@ class SeisMoE(nn.Module):
         # Load pretrained EQTransformer
         print(f"Loading pretrained EQTransformer: {base_model}")
         if not "weights" in base_model or base_model.endswith(".ckpt"):
-            self.base_model = sbm.EQTransformer.from_pretrained(base_model).to(device)
+            temp_model = sbm.EQTransformer.from_pretrained(base_model).to(device)
         else:
             weights = Path(base_model)
             version = sorted(weights.iterdir())[-1]
@@ -291,12 +386,17 @@ class SeisMoE(nn.Module):
                 config = yaml.full_load(f)
             model_cls = models.__getattribute__(config["model"] + "Lit")
             print(f"Model class: {model_cls}")
-            self.base_model = load_best_model(model_cls, weights, version.name).model.to(device)
-            print(f"Loaded local pretrained model from {version}")
+            temp_model = load_best_model(model_cls, weights, version.name).model.to(device)
+            # print(f"Loaded local pretrained model from {version}")
         
+        model_args = temp_model.get_model_args() 
+        self.base_model = EQTransformerWithEMD(**model_args).to(device)
+        self.base_model.load_state_dict(temp_model.state_dict())
+        print("Pretrained EQTransformer with EMD loaded successfully.")
+
         # Store original transformers for initialization
         original_transformer_d0 = self.base_model.transformer_d0
-        original_transformer_d = self.base_model.transformer_d
+        # original_transformer_d = self.base_model.transformer_d
         
         # Replace Transformer layers with MoE versions
         print(f"Converting FFN layers to MoE with {num_experts} experts...")
@@ -319,13 +419,14 @@ class SeisMoE(nn.Module):
         #     init_from_transformer=original_transformer_d
         # ).to(device)
         
-        self.base_model.transformer_d = original_transformer_d  # Keep second transformer as is for simplicity
+        # self.base_model.transformer_d = original_transformer_d  # Keep second transformer as is for simplicity
         
         print("SeisMoE model initialized successfully!")
     
-    def forward(self, x, logits=False):
+    def forward(self, x, emd_stats, logits=False):
         """Forward pass through the model"""
-        return self.base_model(x)
+        # adding emd_stats to device
+        return self.base_model(x, emd_stats, logits=logits)
     
     def train(self, mode=True):
         """Set training mode"""

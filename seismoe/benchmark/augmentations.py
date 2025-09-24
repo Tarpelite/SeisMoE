@@ -131,3 +131,37 @@ class DuplicateEvent:
                 state_dict[label_key[1]] = (y, metadata)
 
         state_dict[self.key[1]] = (x, metadata)
+
+class SyncEMDWindow:
+    """
+    An augmentation that synchronizes the 'emd_features' window with the 'X' window.
+    This should be placed immediately after sbg.RandomWindow or any other windowing augmentation.
+    It assumes that the metadata contains the window boundaries applied to 'X'.
+    """
+    def __call__(self, state_dict):
+        x_data, x_meta = state_dict["X"]
+        
+        # Check for emd_features as top-level key first
+        if "emd_stats" in state_dict:
+            emd_data, emd_meta = state_dict["emd_stats"]
+        elif "emd_stats" in x_meta:
+            # Fallback: extract from metadata
+            emd_data = x_meta["emd_stats"]
+            emd_meta = x_meta
+        else:
+            print("Warning: 'emd_features' key not found in state_dict or metadata. Skipping SyncEMDWindow augmentation.")
+            return state_dict
+        
+        # Apply windowing logic
+        if "window_start_sample" in x_meta and "window_end_sample" in x_meta:
+            start = x_meta["window_start_sample"]
+            end = x_meta["window_end_sample"]
+            new_emd_data = emd_data[..., start:end]
+            
+            # Update in place (works since dicts are mutable)
+            if "emd_stats" in state_dict:
+                state_dict["emd_stats"] = (new_emd_data, emd_meta)
+            else:
+                x_meta["emd_stats"] = new_emd_data
+        
+        return state_dict

@@ -18,7 +18,7 @@ import torch
 import models
 import data
 import logging
-from util import load_best_model, default_workers
+from util import load_best_model, default_workers, CustomSteeredGenerator
 import time
 import datetime
 import packaging
@@ -124,7 +124,8 @@ def main(weights, targets, sets, batchsize, num_workers, sampling_rate=None):
                 logging.warning("Skipping task 1 as restrict_to_phase is set.")
                 continue
 
-            generator = sbg.SteeredGenerator(split, task_targets)
+            # generator = sbg.SteeredGenerator(split, task_targets)
+            generator = CustomSteeredGenerator(split, task_targets)
             generator.add_augmentations(model.get_eval_augmentations())
 
             loader = DataLoader(
