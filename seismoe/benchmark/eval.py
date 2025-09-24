@@ -3,7 +3,7 @@ This script implements functionality for evaluating models.
 Given a model and a set of targets, it calculates and outputs predictions.
 """
 import os
-os.environ['SEISBENCH_CACHE_ROOT'] = '/mnt/data/tianyu/seisbench_cache'
+# os.environ['SEISBENCH_CACHE_ROOT'] = '/mnt/data/tianyu/seisbench_cache'
 import seisbench.generate as sbg
 
 import argparse
